@@ -1,7 +1,7 @@
 ##################################################
 ## Script purpose: generate regional domains based on all transcripts detected by Xenium. run PRECAST on seulist_log30 for k = 23 clusters
 ## Date: 2026-07-16
-## Update date: 2026-07-16
+## Update date: 2026-07-28
 ## Author: Mathias Delhaye
 ##################################################
 
@@ -379,6 +379,19 @@ metadata_seuint <- seuint@meta.data %>%
     TRUE ~ orig.ident
   ))
 
+# Cells that survived PRECAST integration (i.e., got a cluster assignment)
+kept_cells <- Cells(seuint)
+length(kept_cells)
+
+# Filter each per-sample object to only these cells, BEFORE merging
+seulist_log30_filtered <- lapply(seulist_log30, function(seu) {
+  cells_to_keep <- intersect(Cells(seu), kept_cells)
+  subset(seu, cells = cells_to_keep)
+})
+
+# Re-compute seumerged to omit the missing spots
+seumerged <- merge(seulist_log30_filtered[[1]], seulist_log30_filtered[-1])
+
 metadata_seumerged <- seumerged@meta.data %>% 
   rownames_to_column(var = "spot_id") %>% 
   left_join(metadata_seuint, by = c("spot_id","orig.ident")) %>%
@@ -642,9 +655,9 @@ seumerged@meta.data <- metadata_seumerged %>%
 
 rm(metadata_seumerged, metadata_seuint)
 
-seumerged$region <- factor(seumerged$region, levels = c("GCL", "ML", "CA2_CA4", "CA1", "SUB", "GABA", "SL.SR.SLM", "WM", "vascular", "pia", "void"))
-seumerged$region_md <- factor(seumerged$region_md, levels = c("GCL", "ML", "CA2_CA4", "CA1", "SUB", "GABA", "SL.SR.SLM", "WM", "vascular", "pia", "void"))
-seumerged$region_md_hilus <- factor(seumerged$region_md_hilus, levels = c("GCL", "ML", "hilus","CA2_CA4", "CA1", "SUB", "GABA", "SL.SR.SLM", "WM", "vascular", "pia", "void"))
+seumerged$region <- factor(seumerged$region, levels = c("CA1", "SL.SR.SLM", "CA2_CA4", "SUB", "GCL", "ML", "GABA", "WM", "vascular", "pia", "void"))
+seumerged$region_md <- factor(seumerged$region_md, levels = c("CA1", "SL.SR.SLM", "CA2_CA4", "SUB", "GCL", "ML", "GABA", "WM", "vascular", "pia", "void"))
+seumerged$region_md_hilus <- factor(seumerged$region_md_hilus, levels = c("CA1", "SL.SR.SLM", "CA2_CA4", "SUB", "GCL", "ML", "GABA", "WM", "vascular", "pia", "void"))
 seumerged@meta.data <- seumerged@meta.data %>% 
   unite(smpl_ILAE, c(orig.ident, ILAE_score), sep = "_", remove = FALSE)
 seumerged$smpl_ILAE <- factor(seumerged$smpl_ILAE, levels = c("L5_P", "L10_P", "M56_P", "M70_P", "P28_P", "P51_P", "P60_P", "P71_P", "B1_0", "D8_0", "D11_0", "F1_0", "H1_0", "I1_0", "J1_0", "L20_0", "C1_1", "C2_1", "E008_1", "L14_1", "L15_1", "L18_1", "D12_2", "D13_2", "L1_2", "L3_2", "L21_2", "D9_3", "D14_3", "E015_3", "L2_3"))
@@ -736,7 +749,7 @@ for (smpl in samples_names) {
 }
 
 ##################################################
-## Section 6: Regions to megadata
+## Section 7: Regions to megadata
 ##################################################
 
 # create a tibble to store the genes + their coordinates

@@ -13,16 +13,18 @@ library(tidyverse)
 library(here)
 library(future)
 library(pals)
+library(ggpubr)
+library(FSA)
 
-##################################################
+########FSA##################################################
 ## Section 2: Environment
 ##################################################
 
 # Set paths
 choose.files()
 data_path <- choose.dir()
-rds_path <- file.path(data_path, "01_rds_files")
-fig_path <- file.path(data_path, "02_plots","05_region_proportions")
+rds_path <- file.path(data_path, "01_rds_files","01_bins_150px")
+fig_path <- file.path(data_path, "02_plots","01_plots_bins_150px","05_region_proportions")
 dir.create(fig_path,recursive = T, showWarnings = F)
 
 # Load files
@@ -106,7 +108,7 @@ ggsave(
 ##################################################
 
 # removing void (and NAs)
-proportion_CAs <- subset(x = seumerged, subset = region_md %in% c("CA2_CA4","CA1","GABA","SL.SR.SLM")) %>% 
+proportion_CAs <- subset(x = seumerged_v1, subset = region_md %in% c("CA2_CA4","CA1","GABA","SL.SR.SLM")) %>% 
   feature_proportion(feature = "smpl_ILAE", loc = "region_md") %>% 
   separate(smpl_ILAE, into = c("smpl", "ILAE"),sep = "_") %>%
   mutate(ILAE = case_when(
@@ -117,11 +119,15 @@ proportion_CAs <- subset(x = seumerged, subset = region_md %in% c("CA2_CA4","CA1
     TRUE ~ ILAE
   ),
   ILAE = factor(ILAE, c( "P", "ILAE0", "ILAE1", "ILAE2", "ILAE3")))
+proportion_CAs <- as.data.frame(proportion_CAs)
 
 CA_regions <- c("CA2_CA4","CA1","GABA","SL.SR.SLM")
+
 for (reg in CA_regions){
   # isolate for the specific region
   df_sub <- filter(proportion_CAs, region_md == reg)
+  kw <- kruskal.test(df_sub[,5], g = df_sub[,2])
+  
   dunn <- dunnTest(percent_feature ~ ILAE, data = df_sub, method = "bh")
   dunn <- dunn$res %>% 
     mutate(significance = case_when(
@@ -133,6 +139,8 @@ for (reg in CA_regions){
     separate(Comparison, into = c("group1", "group2"), sep = " - ")
   dunn_plot <- dunn %>% 
     filter(P.adj<0.05)
+  kw_pval <- paste("p.val",as.character(round(kw$p.value, 4)))
+  
   p <- df_sub %>% 
     ggplot(aes(x = ILAE, y = percent_feature, fill = ILAE))+
     geom_boxplot(lwd = 0.2, colour = "black",,outlier.shape = NA)+ #can be adjusted
@@ -150,7 +158,7 @@ for (reg in CA_regions){
     )+
     scale_fill_manual(values = color_ILAE)+
     geom_jitter(color="black", size=0, alpha=0.9, width = 0.15)+
-    ggtitle(paste0(reg)) +
+    labs(title = paste0(reg, " - ",kw_pval)) +
     ylab("Proportion")+
     coord_cartesian(ylim = c(0,60), clip = "off") # can be changed with the next line
   

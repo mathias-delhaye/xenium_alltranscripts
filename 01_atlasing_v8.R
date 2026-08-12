@@ -20,6 +20,8 @@ library(grid)
 library(plotly)
 library(DT)
 library(shiny)
+library(data.table)
+library(Matrix)
 
 ##################################################
 ## Section 2: Environment
@@ -28,8 +30,8 @@ library(shiny)
 # Set paths
 choose.files()
 data_path <- choose.dir()
-rds_path <- file.path(data_path, "01_rds_files")
-fig_path <- file.path(data_path, "02_plots")
+rds_path <- file.path(data_path, "01_rds_files","04_bins_100um")
+fig_path <- file.path(data_path, "02_plots","03_plots_bins_100um")
 
 # Load files
 megadata <- read_rds(file.path(rds_path,"01_MegaData_v8.rds"))
@@ -49,73 +51,52 @@ genes_list <- Features(megadata)
 # Initiating seurat list
 seulist <- list()
 
-# Set bin dimension arbitrarily - 150*150px works fine
-bin_width <- 150
-bin_height <- 150
+# Set bin dimension arbitrarily - 150*150um works fine
+bin_width <- 100
+bin_height <- 100
 
-for (im in samples_names){
-  # Field of view where all the genes are stored individually, containing the coordinates of all the transcripts
+for (im in samples_names) {
   fov <- megadata@images[[im]]@molecules$molecules
   
-  # Create a tibble to store the genes + their coordinates
-  transcript_coord <- tibble(gene = character(), x = numeric(), y = numeric(), stringsAsFactors = FALSE)
+  # Pull all gene coordinates via lapply + rbindlist instead of growing a df in a loop
+  transcript_coord <- rbindlist(lapply(genes_list, function(gene) {
+    coords <- fov[[gene]]@coords
+    data.table(gene = gene, x = coords[, 1], y = coords[, 2])
+  }))
   
-  for (n in (1:length(genes_list))){
-    gene <- genes_list[n] # go through the list of genes
-    gene_matrix <- fov[[gene]]@coords # select in the fov the gene
-    temp_df <- tibble(gene = gene, x = gene_matrix[,1], y = gene_matrix[,2]) # temporary df to add all transcripts with their coordinates (transcript name being just the gene name)
-    transcript_coord <- rbind(transcript_coord,temp_df) # join the temp df with the tibble containing all genes
-    rm(temp_df)
-  }
+  # Vectorized binning
+  transcript_coord[, `:=`(
+    bin_x = ceiling(x / bin_width),
+    bin_y = ceiling(y / bin_height)
+  )]
   
-  # Assign each transcript to a spot
-  transcript_coord$bin_x <- ceiling(transcript_coord$x / bin_width) # x coordinate / width of bin
-  transcript_coord$bin_y <- ceiling(transcript_coord$y / bin_height) # y coordinate / height of bin
+  number_bin_x <- ceiling(max(transcript_coord$x) / bin_width)
+  number_bin_y <- ceiling(max(transcript_coord$y) / bin_height)
+  total_bins   <- number_bin_x * number_bin_y
   
-  # Find max number of bin per column and row
-  number_bin_x <- ceiling(max(transcript_coord$x)/bin_width)
-  number_bin_y <- ceiling(max(transcript_coord$y)/bin_height)
+  transcript_coord[, bin_number := (bin_y - 1L) * number_bin_x + bin_x]
   
-  # Give the order of bins
-  transcript_coord$bin_number <- (transcript_coord$bin_y-1)*number_bin_x+transcript_coord$bin_x # (bin_y coordinate - 1 aka number of full lines) * number of bins in X  + coordinate bin_x for the number of bins to add to the full lines
+  # Force factor levels to cover the FULL range of genes/bins so every
+  # gene and every bin appears in the matrix, even with zero transcripts.
+  # No need to manually add missing columns afterwards.
+  gene_f <- factor(transcript_coord$gene, levels = sort(genes_list))
+  bin_f  <- factor(transcript_coord$bin_number, levels = seq_len(total_bins))
   
-  # Count the number of transcripts for each bin and each gene
-  transcript_genexbin <- transcript_coord %>% 
-    group_by(bin_number, gene) %>% 
-    tally() %>% 
-    ungroup()
+  # sparseMatrix sums duplicate (i,j) triplets automatically -> this IS the
+  # group_by + tally + pivot_wider step, done in one call.
+  transcript_genexbin_mat <- sparseMatrix(
+    i = as.integer(gene_f),
+    j = as.integer(bin_f),
+    x = 1,
+    dims = c(nlevels(gene_f), nlevels(bin_f)),
+    dimnames = list(levels(gene_f), paste0(im, "_", seq_len(total_bins)))
+  )
   
-  # Make the tibble wider to have nb of row = nb of genes and nb of column = nb of bins
-  transcript_genexbin <- transcript_genexbin %>% 
-    pivot_wider(names_from = bin_number, values_from = n) %>% 
-    arrange(gene) %>% 
-    column_to_rownames(var = "gene") %>% 
-    rename_with(~ paste0(im,"_", .)) #change the name of the bin to add the sample name _ and not just having numbers
-  
-  # Find the bins that we kept through previous operation, which are bins with at least 1 transcript
-  bin_w_transcript <- colnames(transcript_genexbin)
-  # Find the missing bins and add empty columns with these missing bins
-  missing_bin = setdiff(paste0(im,"_",as.character(1:(number_bin_x*number_bin_y))),bin_w_transcript)
-  transcript_genexbin[,missing_bin] <- NA
-  
-  # Convert tibble into matrix
-  transcript_genexbin_mat <- as.matrix(transcript_genexbin)
-  
-  # Replace NA by 0
-  transcript_genexbin_mat[is.na(transcript_genexbin_mat)] <- 0
-  
-  # Re-order the column to have them in the order of bins
-  transcript_genexbin_mat <- transcript_genexbin_mat[,paste0(im,"_",as.character(1:(number_bin_x*number_bin_y)))]
-  
-  # Get the coordinates for each bin
-  bin_grid <- expand_grid(row = 1:number_bin_y, col = 1:number_bin_x) %>% # create all combination possible with the value given (here being the number of bins in X and Y), with the second argument being the one used first to increase value (1-1, 1-2, 1-3, ... 1-n, 2-1, 2-2, ... 2-n, etc...)
-    select(col,row) %>% # re-order the columns to have x first then y
-    as.data.frame() # convert into a df
-  # Name each row with the corresponding bin
-  row.names(bin_grid) <- paste0(im,"_",as.character(1:(number_bin_x*number_bin_y)))
-  # Add the position windows for each bin in X & Y so that we can place segmented area in each bin based on the centroids position
-  bin_grid$x_window <- bin_grid$col*bin_width
-  bin_grid$y_window <- bin_grid$row*bin_height
+  # Bin coordinate grid (col varies fastest, matching bin_number formula)
+  bin_grid <- expand.grid(col = 1:number_bin_x, row = 1:number_bin_y)
+  rownames(bin_grid) <- paste0(im, "_", seq_len(total_bins))
+  bin_grid$x_window <- bin_grid$col * bin_width
+  bin_grid$y_window <- bin_grid$row * bin_height
   
   seu <- CreateSeuratObject(
     counts = transcript_genexbin_mat,
@@ -123,16 +104,14 @@ for (im in samples_names){
     meta.data = bin_grid
   )
   
-  # Change orig.ident to set it to sample name - needs to use level as it is considered as a factor
   levels(seu@meta.data$orig.ident) <- im
-  
   seulist[[im]] <- seu
 }
 
 # Save seurat list
-saveRDS(seulist,file.path(rds_path,"02_seulist_v8.rds"))
+saveRDS(seulist,file.path(rds_path,"02_seulist_100um_v8.rds"))
 
-seulist <- read_rds(file.path(rds_path,"02_seulist_v8.rds"))
+seulist <- read_rds(file.path(rds_path,"02_seulist_100um_v8.rds"))
 
 # Building seulist_log30 filter with >30 counts/spot + log normalization
 
@@ -141,25 +120,25 @@ seulist_log30 <- list()
 # Going through the list
 for (im in samples_names){
   seulist_log30[[im]] <- seulist[[im]] %>% 
-    subset(subset = nCount_RNA>30) %>% #filter out bins with <30 transcripts
+    subset(subset = nCount_RNA>10) %>% #filter out bins with <30 transcripts
     NormalizeData() %>%
     FindVariableFeatures() %>% 
     ScaleData()
 }
 
-saveRDS(seulist_log30,file.path(rds_path,"03_seulist_log30_v8.rds"))
+saveRDS(seulist_log30,file.path(rds_path,"03_seulist_100um_log30_v8.rds"))
 
 ##################################################
 ## Section 4: seulist to PRECAST
 ##################################################
 
 # Load seulist_log30 if needed
-seulist_log30 <- readRDS(file.path(rds_path,"03_seulist_log30_v8.rds"))
+seulist_log30 <- readRDS(file.path(rds_path,"03_seulist_100um_log30_v8.rds"))
 
 # Create PRECAST object
 preobj <- CreatePRECASTObject(seuList = seulist_log30)
 
-saveRDS(preobj, file.path(rds_path,"04_preobj_v8.rds"))
+saveRDS(preobj, file.path(rds_path,"04_preobj_100um_v8.rds"))
 
 # Add adjacency matrix list for a PRECASTObj object to prepare for PRECAST model fitting.
 PRECASTObj <- AddAdjList(preobj, platform = "Other_SRT")
@@ -167,18 +146,18 @@ PRECASTObj <- AddAdjList(preobj, platform = "Other_SRT")
 # Add a model setting in advance for a PRECASTObj object. verbose =TRUE helps outputing the information in the algorithm.
 PRECASTObj <- AddParSetting(PRECASTObj, Sigma_equal = FALSE, coreNum = 1, maxIter = 30, verbose = TRUE)
 
-saveRDS(PRECASTObj, file.path(rds_path,"05_PRECASTobj_v8.rds"))
+saveRDS(PRECASTObj, file.path(rds_path,"05_PRECASTobj_100um_v8.rds"))
 
 # Find range of optimal number of cluster
 precast_list_k1to30 = list()
-for (k in 1:30){
+for (k in 15:30){
   precast_list_k1to30[[paste0("k",as.character(k))]] <- PRECAST(PRECASTObj, K = k)
 }
 
-saveRDS(precast_list_k1to30, file.path(rds_path,"06_precast_list_k1to30.rds"))
+saveRDS(precast_list_k1to30, file.path(rds_path,"06_precast_100um_lis_k1to30.rds"))
 
 aicList<-list()
-for(k in 1:30){
+for(k in 1:16){
   PRECASTObj <- SelectModel(precast_list_k1to30[[k]],criteria='AIC')
   aicList[k]<-PRECASTObj@resList$icMat[2]
   print(aicList[k])
@@ -189,15 +168,15 @@ for(k in 1:30){
 aic<-as.numeric(unlist(aicList))
 
 # Adjust the indices to start from 2
-aic_df <- data.frame(Index = 1:30, AIC = aic)
+aic_df <- data.frame(Index = 15:30, AIC = aic)
 
 # Plot using ggplot2 with y-axis labels in scientific notation
 p <- ggplot(aic_df, aes(x = Index, y = AIC)) +
   geom_line() + # Add line
   geom_point()+
   scale_y_continuous(labels = scales::scientific)+
-  geom_vline(xintercept = 8, linetype = "dashed", color = "red", linewidth = 1)+
-  geom_vline(xintercept = 22, linetype = "dashed", color = "red", linewidth = 1)+
+  # geom_vline(xintercept = 8, linetype = "dashed", color = "red", linewidth = 1)+
+  # geom_vline(xintercept = 22, linetype = "dashed", color = "red", linewidth = 1)+
   theme_minimal()+
   theme(
     axis.title = element_text(size = 14),
@@ -206,7 +185,7 @@ p <- ggplot(aic_df, aes(x = Index, y = AIC)) +
                                angle = 45)
   )
   
-ggsave(filename = file.path(fig_path,"01_precast_AICvskcluster.png"),
+ggsave(filename = file.path(fig_path,"01_precast_100um_AICvskcluster.png"),
       plot = p,
       dpi = 300,
       width = 8,
@@ -763,8 +742,8 @@ for (smpl in samples_names){
   rm(temp_df)
 }
 
-# Add column for the corresponding col and row coordinates by dividing the xy coordinates by 150(px) chosen to define the bins initially
-# ceiling is used here as the bins are 150px by 150px and we want the location of each cell in the right col x row coord
+# Add column for the corresponding col and row coordinates by dividing the xy coordinates by 150(um) chosen to define the bins initially
+# ceiling is used here as the bins are 150um by 150um and we want the location of each cell in the right col x row coord
 cell_coord <- cell_coord %>% 
   mutate(col = ceiling(x/150), 
          row = ceiling(y/150))

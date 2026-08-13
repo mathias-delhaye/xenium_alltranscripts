@@ -34,7 +34,7 @@ rds_path <- file.path(data_path, "01_rds_files")
 fig_path <- file.path(data_path, "02_plots")
 
 # Load files
-megadata <- read_rds(file.path(rds_path, "01_MegaData_v8.rds"))
+megadata <- readRDS(file.path(rds_path, "01_MegaData_v8.rds"))
 seulist <- readRDS(file.path(rds_path, "02_seulist_v8.rds"))
 samples_names <- names(seulist)
 
@@ -109,8 +109,8 @@ incell_transcript_coord_bin <- incell_transcript_coord %>%
   summarise(n_count = sum(n_count)) %>% 
   ungroup()
 
-saveRDS(incell_transcript_coord, file.path(rds_path,"09_inboundaries_transcripts_percell.rds"))
-saveRDS(incell_transcript_coord_bin, file.path(rds_path,"10_inboundaries_transcripts_perbin.rds"))
+saveRDS(incell_transcript_coord, file.path(rds_path,"10_inboundaries_transcripts_percell.rds"))
+saveRDS(incell_transcript_coord_bin, file.path(rds_path,"11_inboundaries_transcripts_perbin.rds"))
 
 ##################################################
 ## Section 4: Isolate extra-boundaries only transcripts
@@ -174,7 +174,7 @@ seulist_extracell <- setNames(
   samples_names
 )
 
-saveRDS(seulist_extracell, file.path(rds_path,"11_seulist_extraboundaries_v8.rds"))
+saveRDS(seulist_extracell, file.path(rds_path,"12_seulist_extraboundaries_v8.rds"))
 
 plan(multisession, workers = parallel::detectCores() - 1)  # adjust worker count as needed
 
@@ -188,7 +188,7 @@ seulist_extracell_log5 <- future_lapply(seulist_extracell[samples_names], functi
 
 names(seulist_extracell_log5) <- samples_names
 plan(sequential)  # reset back to sequential when done
-saveRDS(seulist_extracell_log5, file.path(rds_path,"12_seulist_extraboundaries_log5_v8.rds"))
+saveRDS(seulist_extracell_log5, file.path(rds_path,"13_seulist_extraboundaries_log5_v8.rds"))
 
 seumerged_extracell <- merge(seulist_extracell_log5[[1]], seulist_extracell_log5[-1])
 
@@ -206,14 +206,14 @@ metadata_seumerged_extracell <- metadata_seumerged_extracell %>%
   
 seumerged_extracell@meta.data <- metadata_seumerged_extracell
 
-saveRDS(seumerged_extracell, file.path(rds_path,"13_seumerged_extraboundaries_v8.rds"))
+saveRDS(seumerged_extracell, file.path(rds_path,"14_seumerged_extraboundaries_v8.rds"))
 
 ##################################################
 ## Section 5: Run pseudobulking 
 ##################################################
 
 # Load seumerged_extrabound if needed
-seumerged_extrabound <- readRDS(file.path(rds_path,"13_seumerged_extraboundaries_v8.rds"))
+seumerged_extrabound <- readRDS(file.path(rds_path,"14_seumerged_extraboundaries_v8.rds"))
 
 # Join layers for seurat functions
 seumerged_extrabound_joined <- JoinLayers(seumerged_extrabound)
@@ -310,7 +310,7 @@ compute_deg_table <- function(pseudo,
   bind_rows(results_list)
 }
 
-saveRDS(df_deg, file = file.path(rds_path,"14_degtable_v8.rds"))
+saveRDS(df_deg, file = file.path(rds_path,"15_degtable_v8.rds"))
 
 # helper function to generate volcano plots and upload them to a specific directory
 plot_deg_volcanoes <- function(deg_table, output.dir,

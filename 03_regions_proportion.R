@@ -103,6 +103,19 @@ ggsave(
   height = 6
 )
 
+n_spots_regions <- seumerged_case_reg_proportion %>% 
+  separate(smpl_ILAE, into = c("smpl", "ILAE"),sep = "_") %>%
+  mutate(ILAE = case_when(
+    ILAE == "0" ~ "ILAE0",
+    ILAE == "1" ~ "ILAE1",
+    ILAE == "2" ~ "ILAE2",
+    ILAE == "3" ~ "ILAE3",
+    TRUE ~ ILAE
+  ),
+  ILAE = factor(ILAE, c( "P", "ILAE0", "ILAE1", "ILAE2", "ILAE3"))) %>% 
+  select(-c(percent_feature))
+
+saveRDS(n_spots_regions, file.path(rds_path,"09_n_spots_regions_v8.rds"))
 
 ##################################################
 ## Section 5: plot proportions CAs regions
@@ -248,6 +261,7 @@ ggsave(
   height = 4,
   dpi = 300
 )
+
 
 ##################################################
 ## Section 7: additional plot for QC (number of counts per case/region)

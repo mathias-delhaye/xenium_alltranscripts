@@ -23,8 +23,8 @@ library(FSA)
 # Set paths
 choose.files()
 data_path <- choose.dir()
-rds_path <- file.path(data_path, "01_rds_files","01_bins_150px")
-fig_path <- file.path(data_path, "02_plots","01_plots_bins_150px","05_region_proportions")
+rds_path <- file.path(data_path, "01_rds_files","02_bins_150um")
+fig_path <- file.path(data_path, "02_plots","01_plots_bins_150um","05_region_proportions")
 dir.create(fig_path,recursive = T, showWarnings = F)
 
 # Load files
@@ -103,6 +103,7 @@ ggsave(
   height = 6
 )
 
+
 ##################################################
 ## Section 5: plot proportions CAs regions
 ##################################################
@@ -178,7 +179,78 @@ for (reg in CA_regions){
 }
 
 ##################################################
-## Section 6: additional plot for QC (number of counts per case/region)
+## Section 6: plot proportions GABA in hilus
+##################################################
+
+# removing void (and NAs)
+proportion_hilus <- subset(x = seumerged, subset = region_md_hilus %in% c("hilus")) %>% 
+  feature_proportion(feature = "smpl_ILAE", loc = "region") %>% 
+  separate(smpl_ILAE, into = c("smpl", "ILAE"),sep = "_") %>%
+  mutate(ILAE = case_when(
+    ILAE == "0" ~ "ILAE0",
+    ILAE == "1" ~ "ILAE1",
+    ILAE == "2" ~ "ILAE2",
+    ILAE == "3" ~ "ILAE3",
+    TRUE ~ ILAE
+  ),
+  ILAE = factor(ILAE, c( "P", "ILAE0", "ILAE1", "ILAE2", "ILAE3")))
+proportion_hilus <- as.data.frame(proportion_hilus)
+
+
+
+df_sub <- filter(proportion_hilus, region == "GABA")
+kw <- kruskal.test(df_sub[,5], g = df_sub[,2])
+
+dunn <- dunnTest(percent_feature ~ ILAE, data = df_sub, method = "bh")
+dunn <- dunn$res %>% 
+  mutate(significance = case_when(
+    P.adj < 0.001 ~ "***",
+    P.adj < 0.01 ~ "**",
+    P.adj < 0.05 ~ "**",
+    TRUE ~ "ns"
+  )) %>% 
+  separate(Comparison, into = c("group1", "group2"), sep = " - ")
+dunn_plot <- dunn %>% 
+  filter(P.adj<0.05)
+kw_pval <- paste("p.val",as.character(round(kw$p.value, 4)))
+
+p <- df_sub %>% 
+  ggplot(aes(x = ILAE, y = percent_feature, fill = ILAE))+
+  geom_boxplot(lwd = 0.2, colour = "black",,outlier.shape = NA)+ #can be adjusted
+  theme_minimal()+
+  theme(axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(colour = "black"),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(colour = "black",
+                                   size = 9),
+        panel.grid = element_blank(),
+        legend.position = "none",
+        axis.title = element_blank(),
+        title = element_text(colour = "black",
+                             size = 9),
+  )+
+  scale_fill_manual(values = color_ILAE)+
+  geom_jitter(color="black", size=0, alpha=0.9, width = 0.15)+
+  labs(title = paste0("GABA - ",kw_pval)) +
+  ylab("Proportion")+
+  coord_cartesian(ylim = c(0,60), clip = "off") # can be changed with the next line
+
+if (nrow(dunn_plot)>0){
+  max_df <- max(df_sub$percent_feature)
+  position_comparison = seq(from = max_df + 1, to = max_df + nrow(dunn_plot)*3, by = 3)
+  p <- p +
+    stat_pvalue_manual(dunn_plot, label = "significance", tip.length = 0.01, y.position = position_comparison)
+}
+ggsave(
+  filename = file.path(fig_path,paste0("06_proportion_GABA_inhilus.png")),
+  plot = p,
+  width = 2,
+  height = 4,
+  dpi = 300
+)
+
+##################################################
+## Section 7: additional plot for QC (number of counts per case/region)
 ##################################################
 
 seumerged@meta.data %>%
